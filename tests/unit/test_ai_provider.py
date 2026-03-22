@@ -6,8 +6,12 @@ import json
 import pytest
 from unittest.mock import patch, MagicMock
 
-from app.services.ai_provider import AnthropicProvider, GeminiProvider, AIAnalysisResult
-
+from app.services.ai_provider import (
+    AnthropicProvider,
+    GeminiProvider,
+    AIAnalysisResult,
+    normalize_analysis_payload,
+)
 
 MOCK_VALID_RESPONSE = json.dumps({
     "category": "billing",
@@ -42,11 +46,50 @@ class TestAIAnalysisResult:
         assert result.urgency == "medium"
         assert result.confidence == 0.5
 
+    def test_invalid_choices_are_normalized_to_defaults(self):
+        result = AIAnalysisResult({
+            "category": "invoice",
+            "urgency": "urgent",
+            "sentiment": "angry",
+            "suggested_team": "billing-team",
+        })
+        assert result.category == "other"
+        assert result.urgency == "medium"
+        assert result.sentiment == "neutral"
+        assert result.suggested_team == "support"
+
+    def test_confidence_is_clamped_and_non_numeric_falls_back(self):
+        high = AIAnalysisResult({"confidence": 1.7})
+        low = AIAnalysisResult({"confidence": -3})
+        invalid = AIAnalysisResult({"confidence": "not-a-number"})
+        assert high.confidence == 1.0
+        assert low.confidence == 0.0
+        assert invalid.confidence == 0.5
+
+    def test_text_fields_are_coerced_to_strings(self):
+        result = AIAnalysisResult({"summary": None, "draft_reply": 12345})
+        assert result.summary == ""
+        assert result.draft_reply == "12345"
+
     def test_to_dict(self):
         result = AIAnalysisResult({"category": "bug", "confidence": 0.7})
         d = result.to_dict()
         assert "category" in d
         assert "confidence" in d
+
+
+class TestNormalizeAnalysisPayload:
+    def test_payload_normalization_returns_expected_defaults(self):
+        normalized = normalize_analysis_payload(None)
+        assert normalized == {
+            "category": "other",
+            "urgency": "medium",
+            "sentiment": "neutral",
+            "summary": "",
+            "suggested_team": "support",
+            "draft_reply": "",
+            "confidence": 0.5,
+        }
 
 
 class TestAnthropicProvider:
