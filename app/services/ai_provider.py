@@ -22,19 +22,26 @@ from app.core.config import settings
 from app.core.logging import logger
 
 
+VALID_CATEGORIES = {"billing", "bug", "account", "refund", "abuse", "other"}
+VALID_URGENCY = {"low", "medium", "high"}
+VALID_SENTIMENT = {"positive", "neutral", "negative"}
+VALID_TEAMS = {"payments", "tech", "ops", "support", "unknown"}
+
+
 # ── 결과 데이터클래스 ─────────────────────────────
 class AIAnalysisResult:
     def __init__(self, raw: dict):
-        self.category: str = raw.get("category", "other")
-        self.urgency: str = raw.get("urgency", "medium")
-        self.sentiment: str = raw.get("sentiment", "neutral")
-        self.summary: str = raw.get("summary", "")
-        self.suggested_team: str = raw.get("suggested_team", "support")
-        self.draft_reply: str = raw.get("draft_reply", "")
+        normalized = normalize_analysis_payload(raw)
+        self.category: str = normalized["category"]
+        self.urgency: str = normalized["urgency"]
+        self.sentiment: str = normalized["sentiment"]
+        self.summary: str = normalized["summary"]
+        self.suggested_team: str = normalized["suggested_team"]
+        self.draft_reply: str = normalized["draft_reply"]
         # confidence: 모델이 자체 확신도를 0.0~1.0으로 평가해 반환
         # 향후 레이블 데이터 쌓이면 calibration 후처리로 보정 가능
-        self.confidence: float = float(raw.get("confidence", 0.5))
-        self.raw = raw
+        self.confidence: float = normalized["confidence"]
+        self.raw = normalized
 
     def to_dict(self) -> dict:
         return {
@@ -46,6 +53,46 @@ class AIAnalysisResult:
             "draft_reply": self.draft_reply,
             "confidence": self.confidence,
         }
+
+
+# ── 정규화 유틸 ────────────────────────────────────
+def _normalize_text(value: object, default: str = "") -> str:
+    if value is None:
+        return default
+    return str(value).strip()
+
+
+
+def _normalize_choice(value: object, valid_values: set[str], default: str) -> str:
+    candidate = _normalize_text(value, default).lower()
+    return candidate if candidate in valid_values else default
+
+
+
+def _normalize_confidence(value: object, default: float = 0.5) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+
+    if parsed != parsed:  # NaN guard
+        return default
+
+    return max(0.0, min(1.0, parsed))
+
+
+
+def normalize_analysis_payload(raw: Optional[dict]) -> dict:
+    raw = raw or {}
+    return {
+        "category": _normalize_choice(raw.get("category"), VALID_CATEGORIES, "other"),
+        "urgency": _normalize_choice(raw.get("urgency"), VALID_URGENCY, "medium"),
+        "sentiment": _normalize_choice(raw.get("sentiment"), VALID_SENTIMENT, "neutral"),
+        "summary": _normalize_text(raw.get("summary")),
+        "suggested_team": _normalize_choice(raw.get("suggested_team"), VALID_TEAMS, "support"),
+        "draft_reply": _normalize_text(raw.get("draft_reply")),
+        "confidence": _normalize_confidence(raw.get("confidence", 0.5), 0.5),
+    }
 
 
 # ── 기본 프롬프트 (DB에 없을 때 폴백) ─────────────
